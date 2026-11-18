@@ -1,0 +1,614 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>스윙랩 라이브</title>
+<meta name="description" content="휴대폰을 세워 두고 스윙하면 한 번씩 알아서 잘라 녹화하고 바로 분석해 주는 개인 골프 연습 도구">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="스윙랩 라이브">
+<meta name="theme-color" content="#0b0f0c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<style>
+/* layout: dark camera-app look, one theme on purpose. 시작 화면 → 전체 화면 카메라(상태 줄, 결과 카드) → 스윙 목록 */
+:root{
+  color-scheme:dark;
+  --bg:#0b0f0c; --surface:#151d18; --sunk:#101713; --fg:#e3eae4; --muted:#95a499; --line:#28332b;
+  --accent:#4cc38a; --accent-ink:#06120b; --rec:#ff5a4e;
+  --good:#4cc38a; --fair:#e0a548; --check:#f07a68; --info:#86b6dc;
+  --good-bg:#16301f; --fair-bg:#382b13; --check-bg:#3a1c17; --info-bg:#172838;
+  --bone:#5be39c; --glass:rgba(11,15,12,.78);
+  --sans:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  --gl:max(16px,env(safe-area-inset-left,0px)); --gr:max(16px,env(safe-area-inset-right,0px));
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans);-webkit-text-size-adjust:100%}
+[hidden]{display:none!important}
+button,a.btn{font:inherit;font-size:.92rem;font-weight:500;border-radius:10px;padding:10px 16px;border:1px solid var(--line);background:var(--surface);color:var(--fg);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;text-decoration:none;-webkit-tap-highlight-color:transparent}
+button:disabled{opacity:.5;pointer-events:none}
+button:focus-visible,a.btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:700}
+.big{min-height:58px;font-size:1.08rem;width:100%}
+.muted{color:var(--muted)} .small{font-size:.84rem} .fine{font-size:.78rem;color:var(--muted);margin:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.row{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px} .between{justify-content:space-between}
+h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05rem}
+.eyebrow{font-family:var(--mono);font-size:.7rem;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+
+/* 시작 화면 */
+.wrap{max-width:560px;margin:0 auto;padding-block:calc(env(safe-area-inset-top,0px) + 24px) calc(env(safe-area-inset-bottom,0px) + 32px);padding-left:var(--gl);padding-right:var(--gr);display:grid;gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:12px;min-width:0}
+.opts{display:grid;grid-template-columns:auto 1fr;gap:10px 12px;align-items:center}
+.opts > span{font-size:.84rem;color:var(--muted)}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--sunk);justify-self:start}
+.seg button{border:0;border-radius:0;background:transparent;padding:8px 13px;font-size:.85rem;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
+.sw{display:inline-flex;align-items:center;gap:9px;font-size:.88rem;cursor:pointer;user-select:none}
+.sw input{appearance:none;-webkit-appearance:none;width:42px;height:24px;border-radius:99px;background:var(--line);position:relative;margin:0;flex:none;cursor:pointer;transition:background .15s}
+.sw input::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:var(--fg);transition:transform .15s}
+.sw input:checked{background:var(--accent)} .sw input:checked::after{transform:translateX(18px)}
+.steps{margin:0;padding-left:20px;display:grid;gap:4px;font-size:.88rem;color:var(--muted)}
+.steps b{color:var(--fg);font-weight:600}
+.err{background:var(--check-bg);border-radius:10px;padding:12px 14px;font-size:.88rem}
+.err b{color:var(--check)}
+
+/* 카메라 화면 */
+#live{position:fixed;inset:0;background:#000;z-index:10;overflow:hidden}
+#live video,#live canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.hud-top{position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) var(--gr) 10px var(--gl);display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none}
+.status{background:var(--glass);border-radius:12px;padding:9px 13px;font-size:.92rem;font-weight:600;display:flex;gap:8px;align-items:center;max-width:78%;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.status i{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
+.status[data-s="ready"] i{background:var(--rec);animation:blink 1s steps(2) infinite}
+.status[data-s="moving"] i,.status[data-s="busy"] i{background:var(--fair)}
+.status[data-s="idle"] i{background:var(--accent)}
+@keyframes blink{50%{opacity:.25}}
+.count{background:var(--glass);border-radius:12px;padding:8px 12px;text-align:right;font-size:.74rem;color:var(--muted);line-height:1.2;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.count b{display:block;font-family:var(--mono);font-size:1.3rem;color:var(--fg)}
+.hud-bot{position:absolute;left:0;right:0;bottom:0;padding:10px var(--gr) calc(env(safe-area-inset-bottom,0px) + 12px) var(--gl);display:grid;gap:10px}
+.result{background:var(--glass);border-radius:16px;padding:14px 16px;display:grid;gap:8px;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.result .tempo{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.result .tempo b{font-family:var(--mono);font-size:3rem;line-height:1;font-weight:600;letter-spacing:-.03em}
+.result .tempo span{font-size:.86rem;color:var(--muted)}
+.result.compact .tempo b{font-size:1.6rem}
+.result.compact .ms{display:none}
+.ms{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px}
+.mi{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:.84rem;background:rgba(255,255,255,.04);border-radius:8px;padding:6px 9px}
+.mi b{font-family:var(--mono);font-weight:500}
+.st{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap;background:var(--sunk);color:var(--muted)}
+.st[data-s="good"]{background:var(--good-bg);color:var(--good)} .st[data-s="fair"]{background:var(--fair-bg);color:var(--fair)}
+.st[data-s="check"]{background:var(--check-bg);color:var(--check)} .st[data-s="info"]{background:var(--info-bg);color:var(--info)}
+.ctrl{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ctrl button{background:var(--glass);border-color:transparent;min-height:50px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+
+/* 목록 */
+.clip{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:8px;min-width:0}
+.clip-h{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.clip-h b{font-size:.94rem}
+.clip-h span{font-family:var(--mono);font-size:1.05rem}
+.pills{display:flex;flex-wrap:wrap;gap:5px}
+.btns{display:flex;flex-wrap:wrap;gap:6px}
+.btns button{padding:7px 12px;font-size:.84rem}
+.danger{color:var(--check)} .danger.armed{background:var(--check);border-color:var(--check);color:var(--bg)}
+.day{margin:6px 2px 0;font-size:.84rem;color:var(--muted);font-weight:600}
+.empty{border:1px dashed var(--line);border-radius:14px;padding:22px 18px;text-align:center;color:var(--muted);font-size:.9rem;display:grid;gap:4px}
+.empty b{color:var(--fg)}
+#player{position:fixed;inset:0;z-index:30;background:rgba(0,0,0,.92);display:grid;grid-template-rows:auto 1fr;padding:calc(env(safe-area-inset-top,0px) + 10px) var(--gr) calc(env(safe-area-inset-bottom,0px) + 10px) var(--gl);gap:10px}
+#player video{width:100%;height:100%;object-fit:contain;min-height:0}
+.toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 90px);transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:9px 14px;border-radius:10px;font-size:.86rem;z-index:40;max-width:calc(100% - 32px)}
+@media (prefers-reduced-motion:reduce){.status[data-s="ready"] i{animation:none}.sw input,.sw input::after{transition:none}}
+</style>
+</head>
+<body>
+
+<!-- ===================== 시작 ===================== -->
+<main class="wrap" id="home">
+  <header class="row between" style="align-items:flex-end">
+    <div><div class="eyebrow">Swing lab live</div><h1>스윙랩 라이브</h1></div>
+    <span class="small muted" id="engineNote">분석 엔진 준비 중</span>
+  </header>
+
+  <section class="card">
+    <button class="primary big" id="bStart">카메라 켜고 연습 시작</button>
+    <div class="err" id="startErr" hidden></div>
+    <div class="opts">
+      <span>클럽</span>
+      <div class="seg" data-pref="club"><button type="button" data-v="driver">드라이버</button><button type="button" data-v="wood">우드</button><button type="button" data-v="iron">아이언</button><button type="button" data-v="wedge">웨지</button></div>
+      <span>촬영 방향</span>
+      <div class="seg" data-pref="view"><button type="button" data-v="auto">자동</button><button type="button" data-v="face">정면</button><button type="button" data-v="dtl">후방</button></div>
+    </div>
+    <label class="sw"><input type="checkbox" id="optSpeak">스윙 끝나면 결과 읽어 주기</label>
+  </section>
+
+  <section class="card">
+    <h2>이렇게 써요</h2>
+    <ol class="steps">
+      <li>휴대폰을 거치대에 세로로 세우고, <b>머리부터 발끝까지</b> 화면에 나오게 3m쯤 떨어져요.</li>
+      <li>정면이면 공 건너편 가슴 높이, 후방이면 손 뒤쪽 목표선 위 허리 높이에 둬요.</li>
+      <li><b>어드레스 자세로 1초쯤 멈추면</b> 녹화가 시작돼요. 상태 줄에 빨간 점이 깜빡여요.</li>
+      <li>스윙하고 피니시를 잠깐 잡으면, 그 스윙만 잘라서 바로 분석해요.</li>
+      <li>다 치고 나서 <b>스윙 목록</b>에서 영상을 앨범에 저장하고, 스윙랩에 넣으면 코치 의견과 기록을 받을 수 있어요.</li>
+    </ol>
+    <p class="fine">영상과 분석 결과는 이 휴대폰 안에만 남아요. 어디에도 올라가지 않아요.</p>
+  </section>
+
+  <section class="card">
+    <div class="row between"><h2>스윙 목록</h2><span class="small muted mono" id="listMeta"></span></div>
+    <div class="btns">
+      <button type="button" id="bSaveNew">새 스윙 앨범에 저장</button>
+      <a class="btn" href="https://claude.ai/artifact/HeF3Kg4Pg7TgTnRX2JNk8q" target="_blank" rel="noopener">스윙랩에서 코치 받기</a>
+    </div>
+    <div id="clips" style="display:grid;gap:10px"></div>
+  </section>
+</main>
+
+<!-- ===================== 카메라 ===================== -->
+<section id="live" hidden aria-label="촬영 화면">
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="cv"></canvas>
+  <div class="hud-top">
+    <div class="status" id="status" data-s="none" role="status" aria-live="polite"><i></i><span id="statusText">사람을 찾는 중</span></div>
+    <div class="count">오늘<b id="countN">0</b></div>
+  </div>
+  <div class="hud-bot">
+    <div class="result" id="result" hidden aria-live="polite"></div>
+    <div class="ctrl"><button type="button" id="bStop">끝내기</button><button type="button" id="bList">스윙 목록</button></div>
+  </div>
+</section>
+
+<div id="player" hidden>
+  <div class="row between"><b id="playerTitle"></b><button type="button" id="bClosePlayer">닫기</button></div>
+  <video id="pv" playsinline controls></video>
+</div>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script type="module">
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const LIMBS = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28]];
+const JOINTS = [0,11,12,13,14,15,16,23,24,25,26,27,28];
+const STATUS = {good: "좋음", fair: "보통", check: "점검", info: "참고"};
+const CLUBS = {driver: "드라이버", wood: "우드", iron: "아이언", wedge: "웨지"};
+const VIEWS = {face: "정면", dtl: "후방"};
+const SHORT = {tempo: "템포", head: "머리 흔들림", sway: "스웨이", shift: "체중 이동", arm: "왼팔 펴짐", spine: "척추각", ee: "얼리 익스텐션", headH: "머리 높이"};
+
+/* ---------- 설정 ---------- */
+const PREF_KEY = "swinglab-live.prefs.v1";
+const prefs = Object.assign({club: "driver", view: "auto", speak: true},
+  (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}"); } catch { return {}; } })());
+const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
+$$(".seg[data-pref]").forEach(seg => {
+  const key = seg.dataset.pref;
+  const paint = () => seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === prefs[key])));
+  paint();
+  seg.querySelectorAll("button").forEach(b => b.onclick = () => { prefs[key] = b.dataset.v; savePrefs(); paint(); });
+});
+$("#optSpeak").checked = !!prefs.speak;
+$("#optSpeak").onchange = e => { prefs.speak = e.target.checked; savePrefs(); };
+
+let toastT = 0;
+function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600); }
+
+/* ---------- 저장소 (이 기기 IndexedDB) ---------- */
+let dbP = null;
+function idb(){
+  return dbP ??= new Promise((res, rej) => {
+    const r = indexedDB.open("swinglab-live", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("clips", {keyPath: "id"});
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function idbAll(){ const db = await idb(); return new Promise((res, rej) => { const q = db.transaction("clips").objectStore("clips").getAll(); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); }); }
+async function idbTx(fn){ const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("clips", "readwrite"); fn(tx.objectStore("clips")); tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); }); }
+const idbPut = v => idbTx(s => s.put(v));
+const idbDel = id => idbTx(s => s.delete(id));
+let clips = [];
+idbAll().then(all => { clips = all.sort((a, b) => b.at - a.at); renderList(); }).catch(() => renderList());
+
+/* ---------- 엔진 ---------- */
+let engineP = null;
+function loadEngine(){
+  if (engineP) return engineP;
+  $("#engineNote").textContent = "분석 엔진 준비 중";
+  engineP = (async () => {
+    const mod = await import("./mp/vision_bundle.mjs");
+    const fileset = await mod.FilesetResolver.forVisionTasks(new URL("mp/wasm", location.href).href);
+    let last;
+    for (const delegate of ["GPU", "CPU"]) {
+      try {
+        const lm = await mod.PoseLandmarker.createFromOptions(fileset, {baseOptions: {modelAssetPath: new URL("mp/pose_landmarker_lite.task", location.href).href, delegate}, runningMode: "VIDEO", numPoses: 1});
+        $("#engineNote").textContent = "분석 준비됨";
+        return lm;
+      } catch (e) { last = e; }
+    }
+    throw last;
+  })();
+  engineP.catch(() => { engineP = null; $("#engineNote").textContent = "엔진을 못 불러왔어요"; });
+  return engineP;
+}
+loadEngine();
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+/* ---------- 기하 ---------- */
+const pt = (p, i) => [p[i*3], p[i*3+1]];
+const mid = (p, a, b) => [(p[a*3] + p[b*3]) / 2, (p[a*3+1] + p[b*3+1]) / 2];
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+
+/* ---------- 스윙 구간 찾기 (스윙랩과 같은 방식) ---------- */
+function smooth(arr, k){
+  const n = arr.length, out = new Float32Array(n);
+  for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let j = Math.max(0, i - k); j <= Math.min(n - 1, i + k); j++) { s += arr[j]; c++; } out[i] = s / c; }
+  return out;
+}
+function argBy(n, inRange, val, mode){
+  let best = -1, bv = mode === "max" ? -Infinity : Infinity;
+  for (let i = 0; i < n; i++) { if (!inRange(i)) continue; const v = val(i); if (mode === "max" ? v > bv : v < bv) { bv = v; best = i; } }
+  return best;
+}
+function detect(F){
+  const n = F.length;
+  if (n < 20) return {swings: [], S: 1, fps: 0};
+  const t = F.map(f => f.t);
+  const tors = F.map(f => dist(mid(f.p, 11, 12), mid(f.p, 23, 24))).sort((a, b) => a - b);
+  const S = tors[n >> 1] || 1;
+  const fps = (n - 1) / Math.max(t[n-1] - t[0], 1e-3);
+  const k = Math.max(1, Math.round(fps * 0.03));
+  const hx = smooth(F.map(f => (f.p[45] + f.p[48]) / 2), k);
+  const hy = smooth(F.map(f => (f.p[46] + f.p[49]) / 2), k);
+  const sp = new Float32Array(n);
+  for (let i = 1; i < n - 1; i++) { const dt = t[i+1] - t[i-1]; sp[i] = dt > 0 ? Math.hypot(hx[i+1] - hx[i-1], hy[i+1] - hy[i-1]) / dt / S : 0; }
+  sp[0] = sp[1]; sp[n-1] = sp[n-2];
+  const sorted = Array.from(sp).sort((a, b) => a - b);
+  const maxSp = sorted[Math.floor((n - 1) * 0.995)];
+  const base = {t, hx, hy, sp, S, fps};
+  if (maxSp < 1.5) return {...base, swings: []};
+  const thr = 0.45 * maxSp, still = Math.max(0.35, 0.06 * maxSp);
+  const peaks = [];
+  for (let i = 0; i < n; i++) {
+    if (sp[i] < thr) continue;
+    let isMax = true;
+    for (let j = i - 1; j >= 0 && t[i] - t[j] <= 0.5; j--) if (sp[j] >= sp[i]) { isMax = false; break; }
+    if (isMax) for (let j = i + 1; j < n && t[j] - t[i] <= 0.5; j++) if (sp[j] > sp[i]) { isMax = false; break; }
+    if (isMax) peaks.push(i);
+  }
+  const swings = [];
+  let floorT = t[0];
+  for (const pk of peaks) {
+    if (t[pk] <= floorT) continue;
+    const imp = argBy(n, i => t[i] >= t[pk] - 0.3 && t[i] <= t[pk] + 0.1, i => hy[i], "max");
+    if (imp < 0 || t[imp] <= floorT) continue;
+    const top = argBy(n, i => t[i] >= Math.max(t[imp] - 2.5, floorT) && t[i] <= t[imp] - 0.08, i => hy[i], "min");
+    if (top < 0 || (hy[imp] - hy[top]) / S < 0.6) continue;
+    let addr = -1, moving = false;
+    for (let j = top; j >= 0 && t[j] >= Math.max(t[top] - 4, floorT); j--) {
+      if (!moving) { if (sp[j] > still * 2) moving = true; continue; }
+      if (sp[j] < still) { addr = j; break; }
+    }
+    let addrGuess = false;
+    if (addr < 0) { addrGuess = true; addr = argBy(n, i => t[i] >= Math.max(t[top] - 1.0, floorT) && t[i] < t[top], i => hy[i], "max"); if (addr < 0) continue; }
+    let fin = -1;
+    for (let j = imp; j < n && t[j] <= t[imp] + 3; j++) if (t[j] >= t[imp] + 0.3 && sp[j] < still * 1.5) { fin = j; break; }
+    if (fin < 0) fin = argBy(n, i => t[i] >= t[imp] + 0.2 && t[i] <= t[imp] + 1.5, i => hy[i], "min");
+    if (fin < 0) fin = Math.min(n - 1, imp + 1);
+    const bs = t[top] - t[addr], ds = t[imp] - t[top];
+    if (bs < 0.25 || bs > 5 || ds < 0.08 || ds > 2 || bs < ds * 1.2) continue;
+    swings.push({addr, top, imp, fin, bs, ds, slow: ds > 0.6, addrGuess, dsFrames: imp - top});
+    floorT = t[fin];
+  }
+  return {...base, swings};
+}
+
+/* ---------- 지표 (스윙랩과 같은 기준) ---------- */
+function band(v, good, fair){
+  if (v >= good[0] && v <= good[1]) return "good";
+  if (fair && v >= fair[0] && v <= fair[1]) return "fair";
+  return "check";
+}
+const sgn = x => x >= 0 ? 1 : -1;
+function computeMetrics(c, sw){
+  const F = c.F, S = c.S, d = c.det;
+  const a = F[sw.addr].p, tp = F[sw.top].p, im = F[sw.imp].p;
+  const shW = Math.max(dist(pt(a, 11), pt(a, 12)), 0.3 * S);
+  const out = [];
+  const ratio = sw.bs / sw.ds;
+  out.push({key: "tempo", val: `${ratio.toFixed(1)} : 1`, s: sw.slow ? "info" : band(ratio, [2.6, 3.4], [2.2, 3.9])});
+  if (c.view === "face") {
+    const target = -sgn(d.hx[sw.top] - d.hx[sw.addr]);
+    const nx = i => { let s = 0, n = 0; for (let j = Math.max(sw.addr, i - 1); j <= Math.min(sw.imp, i + 1); j++) { s += F[j].p[0]; n++; } return s / n; };
+    const x0 = nx(sw.addr); let m = 0;
+    for (let i = sw.addr; i <= sw.imp; i++) m = Math.max(m, Math.abs(nx(i) - x0));
+    const head = m / shW * 100;
+    out.push({key: "head", val: `${head.toFixed(0)}%`, s: band(head, [0, 15], [0, 25])});
+    const hip = i => mid(F[i].p, 23, 24)[0];
+    const sway = (hip(sw.top) - hip(sw.addr)) * -target / shW * 100;
+    out.push({key: "sway", val: `${Math.abs(sway).toFixed(0)}% ${sway >= 0 ? "뒤쪽" : "목표 쪽"}`, s: band(sway, [-10, 10], [-15, 20])});
+    const shift = (hip(sw.imp) - hip(sw.addr)) * target / shW * 100;
+    out.push({key: "shift", val: `${Math.abs(shift).toFixed(0)}% ${shift >= 0 ? "목표 쪽" : "뒤쪽"}`, s: band(shift, [3, 30], [-3, 40])});
+    const lead = (a[11*3] - a[12*3]) * target > 0 ? 11 : 12;
+    const S_ = pt(tp, lead), E = pt(tp, lead + 2), Wr = pt(tp, lead + 4);
+    const v1 = [S_[0] - E[0], S_[1] - E[1]], v2 = [Wr[0] - E[0], Wr[1] - E[1]];
+    const ang = Math.acos(Math.max(-1, Math.min(1, (v1[0]*v2[0] + v1[1]*v2[1]) / (Math.hypot(...v1) * Math.hypot(...v2) || 1)))) * 180 / Math.PI;
+    out.push({key: "arm", val: `${ang.toFixed(0)}°`, s: band(ang, [160, 180], [145, 180])});
+  } else {
+    const ballDir = sgn(d.hx[sw.addr] - mid(a, 23, 24)[0]);
+    const spine = p => { const sh = mid(p, 11, 12), hp = mid(p, 23, 24); return Math.atan2((sh[0] - hp[0]) * ballDir, hp[1] - sh[1]) * 180 / Math.PI; };
+    const dI = spine(im) - spine(a);
+    out.push({key: "spine", val: `${dI >= 0 ? "+" : ""}${dI.toFixed(0)}°`, s: band(dI, [-5, 5], [-10, 10])});
+    const hipX = i => mid(F[i].p, 23, 24)[0];
+    const ee = (hipX(sw.imp) - hipX(sw.addr)) * ballDir / S * 100;
+    out.push({key: "ee", val: `${Math.abs(ee).toFixed(0)}% ${ee >= 0 ? "공 쪽" : "뒤쪽"}`, s: band(ee, [-100, 6], [-100, 12])});
+    const hd = (F[sw.imp].p[1] - a[1]) / S * 100;
+    out.push({key: "headH", val: `${Math.abs(hd).toFixed(0)}% ${hd >= 0 ? "내려감" : "올라감"}`, s: band(hd, [-6, 6], [-12, 12])});
+  }
+  return out;
+}
+
+/* ---------- 카메라·녹화 ---------- */
+const cam = $("#cam"), cv = $("#cv"), g = cv.getContext("2d");
+let lm = null, stream = null, running = false, lastTs = 0;
+const MIME = window.MediaRecorder ? ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"].find(m => { try { return MediaRecorder.isTypeSupported(m); } catch { return false; } }) || "" : "";
+let rec = null;
+function startRec(){
+  if (!window.MediaRecorder || !stream) return;
+  try {
+    const r = new MediaRecorder(stream, MIME ? {mimeType: MIME, videoBitsPerSecond: 6e6} : undefined);
+    r.chunks = [];
+    r.ondataavailable = e => { if (e.data?.size) r.chunks.push(e.data); };
+    r.start();
+    rec = r;
+  } catch { rec = null; }
+}
+function stopRec(keep){
+  return new Promise(res => {
+    const r = rec; rec = null;
+    if (!r || r.state === "inactive") { res(null); return; }
+    r.onstop = () => res(keep && r.chunks.length ? new Blob(r.chunks, {type: (r.mimeType || MIME || "video/mp4").split(";")[0]}) : null);
+    try { r.stop(); } catch { res(null); }
+  });
+}
+
+let wake = null;
+async function keepAwake(){ try { if (!wake && navigator.wakeLock) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => { wake = null; }); } } catch {} }
+
+function unlockSpeech(){ try { if (window.speechSynthesis) { const u = new SpeechSynthesisUtterance(" "); u.volume = 0; speechSynthesis.speak(u); } } catch {} }
+function speak(text){
+  if (!prefs.speak || !window.speechSynthesis) return;
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.lang = "ko-KR"; u.rate = 1.05; speechSynthesis.speak(u); } catch {}
+}
+
+$("#bStart").onclick = async () => {
+  const btn = $("#bStart"), err = $("#startErr");
+  unlockSpeech();
+  btn.disabled = true; btn.textContent = "카메라 켜는 중"; err.hidden = true;
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name: "NoCamera"});
+    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
+    cam.srcObject = stream;
+    await cam.play().catch(() => {});
+    btn.textContent = "분석 엔진 준비 중";
+    lm = await loadEngine();
+    resetLive();
+    $("#live").hidden = false;
+    running = true;
+    keepAwake();
+    schedule();
+  } catch (e) {
+    stopCamera();
+    const why = e?.name === "NotAllowedError" ? "<b>카메라 사용을 허용해 주세요.</b> 아이폰 설정 › Safari › 카메라에서 '허용'으로 바꾼 뒤 다시 눌러 주세요."
+      : e?.name === "NoCamera" ? "<b>이 브라우저에서는 카메라를 켤 수 없어요.</b> 아이폰 Safari로 열어 주세요."
+      : e?.name === "NotFoundError" || e?.name === "OverconstrainedError" ? "<b>쓸 수 있는 카메라를 찾지 못했어요.</b> 다른 앱이 카메라를 쓰고 있지 않은지 확인해 주세요."
+      : "<b>시작하지 못했어요.</b> 인터넷 연결을 확인하고 페이지를 새로 고친 뒤 다시 눌러 주세요.";
+    err.innerHTML = why; err.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = "카메라 켜고 연습 시작";
+  }
+};
+function stopCamera(){
+  running = false;
+  stopRec(false);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; cam.srcObject = null;
+  try { wake?.release(); } catch {}
+}
+$("#bStop").onclick = () => { stopCamera(); $("#live").hidden = true; renderList(); window.scrollTo(0, 0); };
+$("#bList").onclick = () => { stopCamera(); $("#live").hidden = true; renderList(); $("#clips").scrollIntoView({block: "start"}); };
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") { if (rec) stopRec(false); if (state !== "busy") state = "idle"; }
+  else if (running) { cam.play().catch(() => {}); keepAwake(); }
+});
+
+/* ---------- 실시간 처리 ---------- */
+function schedule(){ if (!running) return; if ("requestVideoFrameCallback" in cam) cam.requestVideoFrameCallback(frame); else requestAnimationFrame(frame); }
+function drawSkel(p, W, H){
+  g.clearRect(0, 0, W, H);
+  if (!p) return;
+  const lw = Math.max(3, Math.min(W, H) / 120);
+  g.lineCap = "round"; g.lineWidth = lw; g.strokeStyle = state === "ready" ? "#ff8a80" : "#5be39c";
+  for (const [a, b] of LIMBS) { if (p[a*3+2] < .35 || p[b*3+2] < .35) continue; g.beginPath(); g.moveTo(p[a*3], p[a*3+1]); g.lineTo(p[b*3], p[b*3+1]); g.stroke(); }
+  g.fillStyle = "#ffffff";
+  for (const i of JOINTS) { if (p[i*3+2] < .35) continue; g.beginPath(); g.arc(p[i*3], p[i*3+1], lw * 1.1, 0, Math.PI * 2); g.fill(); }
+}
+function frame(){
+  if (!running) return;
+  try {
+    const W = cam.videoWidth, H = cam.videoHeight;
+    if (cam.readyState >= 2 && W) {
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      const ts = Math.max(lastTs + 1, Math.round(performance.now())); lastTs = ts;
+      const r = lm.detectForVideo(cam, ts);
+      const L = r.landmarks[0];
+      let p = null;
+      if (L) { p = new Float32Array(99); for (let i = 0; i < 33; i++) { p[i*3] = L[i].x * W; p[i*3+1] = L[i].y * H; p[i*3+2] = L[i].visibility ?? 1; } }
+      drawSkel(p, W, H);
+      step(ts / 1000, p);
+    }
+  } catch {}
+  schedule();
+}
+
+// 상태: idle(대기) → ready(어드레스, 녹화 중) → moving(스윙 중) → busy(분석) → idle
+let state = "idle", buf = [], hand = [], S = 0, stillFor = 0, lostFor = 0, prevT = 0, readyAt = 0, moveAt = 0, coolUntil = 0, noFeet = false, seen = false;
+function resetLive(){ state = "idle"; buf = []; hand = []; S = 0; stillFor = 0; lostFor = 0; prevT = 0; coolUntil = 0; seen = false; $("#result").hidden = true; setStatus(); }
+const STILL = 0.4, MOVE = 1.2;
+function step(t, p){
+  const dt = prevT ? Math.min(0.2, t - prevT) : 0; prevT = t;
+  buf.push({t, p});
+  while (buf.length && buf[0].t < t - 40) buf.shift();
+  const vis = i => p && p[i*3+2] > .5;
+  const person = !!p && [11, 12, 23, 24, 15, 16].every(vis);
+  noFeet = person && !(p[27*3+2] > .3 || p[28*3+2] > .3);
+  let speed = 0, low = false;
+  if (person) {
+    seen = true; lostFor = 0;
+    const tor = dist(mid(p, 11, 12), mid(p, 23, 24));
+    S = S ? S * 0.95 + tor * 0.05 : tor;
+    const h = mid(p, 15, 16);
+    hand.push({t, h});
+    while (hand.length > 2 && hand[0].t < t - 0.12) hand.shift();
+    const h0 = hand[0];
+    speed = t > h0.t ? dist(h, h0.h) / (t - h0.t) / (S || 1) : 0;
+    stillFor = speed < STILL ? stillFor + dt : 0;
+    low = h[1] > mid(p, 11, 12)[1] + 0.6 * S;
+  } else { lostFor += dt; stillFor = 0; hand = []; }
+
+  if (state === "idle") {
+    if (person && low && stillFor >= 0.6 && t >= coolUntil && !noFeet) { state = "ready"; readyAt = t; startRec(); compactResult(); }
+    // 녹화 준비 전에 바로 스윙해도 결과는 보여 준다 (영상은 남지 않음)
+    else if (person && speed > MOVE * 1.5 && t >= coolUntil) { state = "moving"; moveAt = t; readyAt = t - 2.5; compactResult(); }
+  } else if (state === "ready") {
+    if (lostFor > 1.5) { state = "idle"; stopRec(false); }
+    else if (person && speed > MOVE) { state = "moving"; moveAt = t; }
+    else if (t - readyAt > 30) { state = "idle"; stopRec(false); }
+  } else if (state === "moving") {
+    if ((t - moveAt > 0.4 && stillFor >= 0.5) || t - moveAt > 6 || lostFor > 1.5) finalize(t);
+  }
+  setStatus();
+}
+function finalize(t){
+  state = "busy";
+  const F = buf.filter(f => f.t >= readyAt - 0.3 && f.p);
+  const det = detect(F);
+  const sw = det.swings[det.swings.length - 1];
+  const keep = !!sw;
+  setTimeout(async () => {
+    const blob = await stopRec(keep);
+    if (sw) await addResult(F, det, sw, blob);
+    state = "idle"; coolUntil = performance.now() / 1000 + 0.8;
+    setStatus();
+  }, 400);
+}
+let lastStatus = "";
+function setStatus(){
+  const [s, text] =
+    state === "busy" ? ["busy", "분석 중"] :
+    state === "moving" ? ["moving", "스윙 보는 중"] :
+    state === "ready" ? ["ready", "녹화 중 · 스윙하세요"] :
+    !seen || lostFor > 1 ? ["none", "사람을 찾는 중 · 머리부터 발끝까지 보이게 세워 주세요"] :
+    noFeet ? ["none", "발끝까지 화면에 나오게 해 주세요"] :
+    ["idle", "어드레스 자세로 1초 멈추면 녹화를 시작해요"];
+  const key = s + text;
+  if (key === lastStatus) return;
+  lastStatus = key;
+  $("#status").dataset.s = s; $("#statusText").textContent = text;
+}
+
+/* ---------- 결과 ---------- */
+async function addResult(F, det, sw, blob){
+  const a0 = F[sw.addr].p;
+  const view = prefs.view === "auto" ? (dist(pt(a0, 11), pt(a0, 12)) / det.S > 0.45 ? "face" : "dtl") : prefs.view;
+  const ms = computeMetrics({F, S: det.S, det, view}, sw);
+  const clip = {id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: Date.now(), club: prefs.club, view,
+    fps: +det.fps.toFixed(0), tempo: sw.bs / sw.ds, bs: sw.bs, ds: sw.ds, slow: sw.slow, ms, blob, saved: false};
+  clips.unshift(clip);
+  try { await idbPut(clip); } catch { if (blob) toast("이 휴대폰에 영상을 저장하지 못했어요. 목록을 닫기 전에 앨범에 저장해 주세요."); }
+  showResult(clip);
+  const bad = ms.filter(m => m.key !== "tempo" && m.s === "check").map(m => SHORT[m.key]);
+  speak(`템포 ${clip.tempo.toFixed(1)} 대 1.${bad.length ? " " + bad.slice(0, 2).join(", ") + " 점검." : " 자세 좋아요."}`);
+}
+function pillsHTML(ms){ return ms.filter(m => m.key !== "tempo").map(m => `<span class="st" data-s="${m.s}">${SHORT[m.key]} ${m.val}</span>`).join(""); }
+function showResult(c){
+  const r = $("#result");
+  const today = clips.filter(x => sameDay(x.at, Date.now())).length;
+  $("#countN").textContent = String(today);
+  r.classList.remove("compact");
+  r.innerHTML = `<div class="tempo"><b>${c.tempo.toFixed(1)} : 1</b><span>템포 · 백스윙 ${c.bs.toFixed(2)}초 · 다운스윙 ${c.ds.toFixed(2)}초</span><span class="st" data-s="${c.ms[0].s}">${STATUS[c.ms[0].s]}</span></div>
+    <div class="ms">${c.ms.filter(m => m.key !== "tempo").map(m => `<div class="mi"><span>${SHORT[m.key]}</span><b>${m.val}</b><span class="st" data-s="${m.s}">${STATUS[m.s]}</span></div>`).join("")}</div>
+    ${c.slow ? `<p class="fine">다운스윙이 길게 잡혀서 템포 값이 정확하지 않을 수 있어요.</p>` : ""}
+    <p class="fine">${VIEWS[c.view]} · ${CLUBS[c.club]} · 초당 ${c.fps}장으로 분석</p>`;
+  r.hidden = false;
+}
+function compactResult(){ $("#result").classList.add("compact"); }
+
+/* ---------- 목록 ---------- */
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString();
+const WD = "일월화수목금토";
+const fmtDay = ms => { const d = new Date(ms); return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WD[d.getDay()]})`; };
+const fmtTime = ms => { const d = new Date(ms); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+const ext = c => (c.blob?.type || "").includes("webm") ? "webm" : "mp4";
+const fname = c => { const d = new Date(c.at); const p = n => String(n).padStart(2, "0"); return `swing-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext(c)}`; };
+let armed = null;
+function renderList(){
+  const box = $("#clips"); box.innerHTML = "";
+  const bytes = clips.reduce((s, c) => s + (c.blob?.size || 0), 0);
+  const unsaved = clips.filter(c => c.blob && !c.saved);
+  $("#listMeta").textContent = clips.length ? `${clips.length}개 · ${(bytes / 1048576).toFixed(0)}MB` : "";
+  $("#bSaveNew").textContent = unsaved.length ? `새 스윙 ${unsaved.length}개 앨범에 저장` : "새로 저장할 스윙 없음";
+  $("#bSaveNew").disabled = !unsaved.length;
+  $("#countN").textContent = String(clips.filter(x => sameDay(x.at, Date.now())).length);
+  if (!clips.length) { box.innerHTML = `<div class="empty"><b>아직 찍은 스윙이 없어요</b><span>카메라를 켜고 어드레스 자세를 잡으면 스윙마다 여기에 쌓여요.</span></div>`; return; }
+  let prev = null;
+  for (const c of clips) {
+    if (!prev || !sameDay(prev, c.at)) { const h = document.createElement("div"); h.className = "day"; h.textContent = fmtDay(c.at); box.appendChild(h); }
+    prev = c.at;
+    const el = document.createElement("article"); el.className = "clip";
+    el.innerHTML = `<div class="clip-h"><b>${fmtTime(c.at)} · ${CLUBS[c.club] || ""} · ${VIEWS[c.view] || ""}${c.saved ? ` <span class="st" data-s="good">앨범 저장됨</span>` : ""}</b><span>${c.tempo.toFixed(1)} : 1</span></div>
+      <div class="pills">${pillsHTML(c.ms || [])}</div>
+      <div class="btns">${c.blob ? `<button type="button" data-a="play">영상 보기</button><button type="button" data-a="save">앨범에 저장</button>` : `<span class="fine">영상 없이 결과만 남았어요.</span>`}<button type="button" data-a="del" class="danger${armed === c.id ? " armed" : ""}">${armed === c.id ? "한 번 더 누르면 지워요" : "지우기"}</button></div>`;
+    el.querySelector('[data-a="play"]')?.addEventListener("click", () => play(c));
+    el.querySelector('[data-a="save"]')?.addEventListener("click", () => shareClips([c]));
+    el.querySelector('[data-a="del"]').onclick = async () => {
+      if (armed !== c.id) { armed = c.id; renderList(); setTimeout(() => { if (armed === c.id) { armed = null; renderList(); } }, 4000); return; }
+      armed = null; clips = clips.filter(x => x.id !== c.id); idbDel(c.id).catch(() => {}); renderList();
+    };
+    box.appendChild(el);
+  }
+}
+$("#bSaveNew").onclick = () => shareClips(clips.filter(c => c.blob && !c.saved));
+async function shareClips(list){
+  if (!list.length) return;
+  const files = list.map(c => new File([c.blob], fname(c), {type: c.blob.type || "video/mp4"}));
+  if (navigator.canShare?.({files})) {
+    try {
+      await navigator.share({files});
+      for (const c of list) { c.saved = true; idbPut(c).catch(() => {}); }
+      renderList();
+      toast("공유 창에서 '비디오 저장'을 고르면 앨범에 들어가요.");
+    } catch (e) { if (e?.name !== "AbortError") toast("공유하지 못했어요. 한 개씩 다시 눌러 보세요."); }
+    return;
+  }
+  for (const [i, c] of list.entries()) {
+    const a = document.createElement("a"); a.href = URL.createObjectURL(c.blob); a.download = files[i].name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    c.saved = true; idbPut(c).catch(() => {});
+  }
+  renderList();
+}
+let pvURL = null;
+function play(c){
+  if (pvURL) URL.revokeObjectURL(pvURL);
+  pvURL = URL.createObjectURL(c.blob);
+  const v = $("#pv"); v.src = pvURL;
+  $("#playerTitle").textContent = `${fmtTime(c.at)} · 템포 ${c.tempo.toFixed(1)} : 1`;
+  $("#player").hidden = false;
+  v.play().catch(() => {});
+}
+$("#bClosePlayer").onclick = () => { const v = $("#pv"); v.pause(); v.removeAttribute("src"); v.load(); $("#player").hidden = true; };
+</script>
+</body>
+</html>
