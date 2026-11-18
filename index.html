@@ -132,7 +132,7 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
     </div>
     <label class="sw"><input type="checkbox" id="optSpeak">스윙 끝나면 결과 읽어 주기</label>
     <label class="sw"><input type="checkbox" id="optFit">거리 자동 맞춤 (줌이 되는 카메라)</label>
-    <p class="fine">전면 카메라로 찍으면 스윙하면서 화면 속 내 자세와 결과를 볼 수 있어요. 화면은 거울처럼 좌우가 바뀌어 보이고, 녹화되는 영상과 분석은 그대로예요. 후면 카메라가 화질이 더 좋아요.</p>
+    <p class="fine">전면 카메라로 찍으면 스윙하면서 화면 속 내 자세와 결과를 볼 수 있어요. 화면은 거울처럼 좌우가 바뀌어 보이고, 녹화되는 영상과 분석은 그대로예요. 전면은 렌즈가 하나라 줌을 원래보다 넓게 줄일 수 없어요. 휴대폰에서 2m쯤 떨어져 서면 몸 전체가 들어와요. 후면 카메라가 화질이 더 좋고, 초광각으로 더 가까이 설 수 있어요.</p>
   </section>
 
   <section class="card">
@@ -425,7 +425,10 @@ $("#bStart").onclick = async () => {
 async function openCamera(facing, deviceId){
   if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name: "NoCamera"});
   const pick = deviceId ? {deviceId: {exact: deviceId}} : {facingMode: {ideal: facing}};
-  stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {...pick, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
+  // 전면은 렌즈가 하나라 더 넓게 줄일 수 없으니, 센서 전체(4:3)를 받아 잘리는 부분을 없앤다.
+  // 후면은 임팩트를 촘촘히 보도록 16:9 60fps를 우선한다.
+  const size = facing === "user" ? {width: {ideal: 1440}, height: {ideal: 1080}} : {width: {ideal: 1280}, height: {ideal: 720}};
+  stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {...pick, ...size, frameRate: {ideal: 60, max: 60}}});
   // 기기가 알려 주는 실제 방향을 따르고, 모르면 고른 값을 쓴다
   const real = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
   $("#live").classList.toggle("mirror", (real || facing) === "user");
@@ -450,7 +453,7 @@ function setupZoom(){
 }
 function renderZoom(){
   if (!zcap) return;
-  $("#zVal").textContent = `${(zoom / zcap.min).toFixed(1)}×`;
+  $("#zVal").textContent = zoom <= zcap.min + 1e-3 ? "가장 넓게" : `${(zoom / zcap.min).toFixed(1)}×`;
   $("#zOut").disabled = zoom <= zcap.min + 1e-3;
   $("#zIn").disabled = zoom >= zcap.max - 1e-3;
 }
@@ -668,7 +671,8 @@ function setStatus(){
     state === "moving" ? ["moving", "스윙 보는 중"] :
     state === "ready" ? ["ready", "녹화 중 · 스윙하세요"] :
     !seen || lostFor > 1 ? ["none", "사람을 찾는 중 · 머리부터 발끝까지 보이게 세워 주세요"] :
-    noFeet || lastFrame.cut ? ["none", zcap && prefs.autoFit ? "몸이 화면 밖으로 나가요 · 줌을 줄이는 중이에요" : zcap ? "몸이 잘려요 · 줌을 줄이거나 한 걸음 뒤로 가 주세요" : "몸이 잘려요 · 한 걸음 뒤로 가 주세요"] :
+    noFeet || lastFrame.cut ? ["none", !zcap || zoom <= zcap.min + 1e-3 ? (prefs.facing === "user" ? "가장 넓게 보는 중이에요 · 한 걸음 뒤로 가 주세요 (2m쯤)" : "몸이 잘려요 · 한 걸음 뒤로 가 주세요")
+      : prefs.autoFit ? "몸이 화면 밖으로 나가요 · 줌을 줄이는 중이에요" : "몸이 잘려요 · 줌을 줄이거나 한 걸음 뒤로 가 주세요"] :
     fracE != null && fracE < 0.42 && !(zcap && prefs.autoFit) ? ["idle", zcap ? "조금 멀어요 · 줌을 키우거나 가까이 오면 더 정확해요" : "조금 멀어요 · 한두 걸음 가까이 오면 더 정확해요"] :
     ["idle", "어드레스 자세로 1초 멈추면 녹화를 시작해요"];
   const key = s + text;
