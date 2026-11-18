@@ -62,6 +62,11 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
 #live{position:fixed;inset:0;background:#000;z-index:10;overflow:hidden}
 #live video,#live canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
 #live.mirror video,#live.mirror canvas{transform:scaleX(-1)}
+#live{touch-action:none}
+.zoom{display:flex;align-items:center;gap:6px;justify-content:center;flex-wrap:wrap}
+.zoom button{background:var(--glass);border-color:transparent;min-width:46px;min-height:42px;font-size:1.1rem;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.zoom #zAuto,.zoom #bLens{font-size:.86rem}
+.zoom .zv{background:var(--glass);border-radius:10px;padding:9px 12px;font-family:var(--mono);font-size:.95rem;min-width:64px;text-align:center;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .hud-top{position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) var(--gr) 10px var(--gl);display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none}
 .status{background:var(--glass);border-radius:12px;padding:9px 13px;font-size:.92rem;font-weight:600;display:flex;gap:8px;align-items:center;max-width:78%;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .status i{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
@@ -126,6 +131,7 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
       <div class="seg" data-pref="view"><button type="button" data-v="auto">자동</button><button type="button" data-v="face">정면</button><button type="button" data-v="dtl">후방</button></div>
     </div>
     <label class="sw"><input type="checkbox" id="optSpeak">스윙 끝나면 결과 읽어 주기</label>
+    <label class="sw"><input type="checkbox" id="optFit">거리 자동 맞춤 (줌이 되는 카메라)</label>
     <p class="fine">전면 카메라로 찍으면 스윙하면서 화면 속 내 자세와 결과를 볼 수 있어요. 화면은 거울처럼 좌우가 바뀌어 보이고, 녹화되는 영상과 분석은 그대로예요. 후면 카메라가 화질이 더 좋아요.</p>
   </section>
 
@@ -161,6 +167,10 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
   </div>
   <div class="hud-bot">
     <div class="result" id="result" hidden aria-live="polite"></div>
+    <div class="zoom">
+      <span id="zoomBar" hidden style="display:contents"><button type="button" id="zOut" aria-label="줌 줄이기">−</button><span class="zv" id="zVal" aria-live="polite">1.0×</span><button type="button" id="zIn" aria-label="줌 키우기">+</button><button type="button" id="zAuto">자동 맞춤</button></span>
+      <button type="button" id="bLens" hidden>렌즈 바꾸기</button>
+    </div>
     <div class="ctrl"><button type="button" id="bStop">끝내기</button><button type="button" id="bFlip">카메라 전환</button><button type="button" id="bList">스윙 목록</button></div>
   </div>
 </section>
@@ -183,7 +193,7 @@ const SHORT = {tempo: "템포", head: "머리 흔들림", sway: "스웨이", shi
 
 /* ---------- 설정 ---------- */
 const PREF_KEY = "swinglab-live.prefs.v1";
-const prefs = Object.assign({club: "driver", view: "auto", speak: true, facing: "environment"},
+const prefs = Object.assign({club: "driver", view: "auto", speak: true, facing: "environment", autoFit: true},
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}"); } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
 const paints = {};
@@ -195,6 +205,8 @@ $$(".seg[data-pref]").forEach(seg => {
 });
 $("#optSpeak").checked = !!prefs.speak;
 $("#optSpeak").onchange = e => { prefs.speak = e.target.checked; savePrefs(); };
+$("#optFit").checked = !!prefs.autoFit;
+$("#optFit").onchange = e => { prefs.autoFit = e.target.checked; savePrefs(); };
 
 let toastT = 0;
 function toast(msg){ const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 2600); }
@@ -410,14 +422,112 @@ $("#bStart").onclick = async () => {
     btn.disabled = false; btn.textContent = "카메라 켜고 연습 시작";
   }
 };
-async function openCamera(facing){
+async function openCamera(facing, deviceId){
   if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name: "NoCamera"});
-  stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: facing}, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
+  const pick = deviceId ? {deviceId: {exact: deviceId}} : {facingMode: {ideal: facing}};
+  stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {...pick, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
   // 기기가 알려 주는 실제 방향을 따르고, 모르면 고른 값을 쓴다
   const real = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
   $("#live").classList.toggle("mirror", (real || facing) === "user");
   cam.srcObject = stream;
   await cam.play().catch(() => {});
+  setupZoom();
+  setupLens(facing);
+}
+
+/* ---------- 줌·렌즈 ---------- */
+let track = null, zcap = null, zoom = 1, zTarget = null, zBusy = false;
+function setupZoom(){
+  track = stream?.getVideoTracks()[0] || null;
+  let caps = {};
+  try { caps = track?.getCapabilities?.() || {}; } catch {}
+  const z = caps.zoom;
+  zcap = z && z.max > z.min ? {min: z.min, max: Math.min(z.max, z.min * 10)} : null;
+  zoom = track?.getSettings?.().zoom ?? zcap?.min ?? 1;
+  fracE = null;
+  $("#zoomBar").hidden = !zcap;
+  renderZoom();
+}
+function renderZoom(){
+  if (!zcap) return;
+  $("#zVal").textContent = `${(zoom / zcap.min).toFixed(1)}×`;
+  $("#zOut").disabled = zoom <= zcap.min + 1e-3;
+  $("#zIn").disabled = zoom >= zcap.max - 1e-3;
+}
+function setZoom(z){
+  if (!zcap || !track) return;
+  z = Math.max(zcap.min, Math.min(zcap.max, z));
+  if (Math.abs(z - zoom) < 1e-3) return;
+  zoom = z; zTarget = z; fracE = null; renderZoom();
+  if (zBusy) return;
+  zBusy = true;
+  (async () => {
+    while (zTarget != null) { const t = zTarget; zTarget = null; try { await track.applyConstraints({advanced: [{zoom: t}]}); } catch {} }
+    zBusy = false;
+  })();
+}
+$("#zIn").onclick = () => setZoom(zoom * 1.25);
+$("#zOut").onclick = () => setZoom(zoom / 1.25);
+$("#zAuto").onclick = () => { if (!fitOnce()) toast("머리부터 발끝까지 화면에 보이게 선 뒤에 눌러 주세요. 지금은 몸이 잘려 있으면 줌을 줄여요."); };
+// 두 손가락으로 벌리고 오므려 줌
+let pinch = null;
+$("#live").addEventListener("touchstart", e => {
+  if (e.touches.length === 2 && zcap) { const [a, b] = e.touches; pinch = {d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), z: zoom}; }
+}, {passive: true});
+$("#live").addEventListener("touchmove", e => {
+  if (!pinch || e.touches.length !== 2) return;
+  e.preventDefault();
+  const [a, b] = e.touches;
+  setZoom(pinch.z * Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / (pinch.d || 1));
+}, {passive: false});
+$("#live").addEventListener("touchend", e => { if (e.touches.length < 2) pinch = null; });
+
+// 줌이 안 되는 기기: 같은 쪽 렌즈가 여럿이면(초광각 등) 바꿔 쓸 수 있게
+let lenses = [], lensIdx = 0;
+async function setupLens(facing){
+  lenses = [];
+  if (zcap) { $("#bLens").hidden = true; return; }
+  try {
+    const all = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput" && d.deviceId);
+    const isFront = d => /front|전면|facetime/i.test(d.label);
+    lenses = all.filter(d => facing === "user" ? isFront(d) : !isFront(d));
+    const curId = track?.getSettings?.().deviceId;
+    lensIdx = Math.max(0, lenses.findIndex(d => d.deviceId === curId));
+  } catch {}
+  $("#bLens").hidden = lenses.length < 2;
+}
+$("#bLens").onclick = async () => {
+  if (lenses.length < 2 || flipping) return;
+  flipping = true; $("#bLens").disabled = true;
+  const next = lenses[(lensIdx + 1) % lenses.length];
+  running = false;
+  await stopRec(false);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try { await openCamera(prefs.facing, next.deviceId); toast(next.label || "렌즈를 바꿨어요"); }
+  catch { toast("이 렌즈는 쓸 수 없어요."); try { await openCamera(prefs.facing); } catch {} }
+  resetLive(); running = !!stream; schedule();
+  flipping = false; $("#bLens").disabled = false;
+};
+
+// 화면 속 몸 크기: 머리 위부터 발끝까지가 화면 높이에서 차지하는 비율
+let fracE = null, cutFor = 0, smallFor = 0, lastFit = 0, lastFrame = {cut: false, frac: null};
+function framing(p, H){
+  const head = [0, 2, 5, 7, 8].filter(i => p[i*3+2] > .5);
+  const feet = [27, 28, 29, 30, 31, 32].filter(i => p[i*3+2] > .3);
+  if (!head.length) return {cut: true, frac: null};
+  const top = Math.min(...head.map(i => p[i*3+1])) - 0.3 * (S || 0);
+  const bottom = feet.length ? Math.max(...feet.map(i => p[i*3+1])) : null;
+  const cut = !feet.length || top < 0 || bottom > H * 0.985;
+  return {cut, frac: bottom != null ? (bottom - top) / H : null};
+}
+const FIT = 0.72;
+function fitOnce(){
+  if (!zcap) return false;
+  if (lastFrame.cut) { setZoom(zoom / 1.3); return true; }
+  const f = fracE ?? lastFrame.frac;
+  if (!f) return false;
+  setZoom(zoom * Math.max(0.6, Math.min(1.6, FIT / f)));
+  return true;
 }
 // 촬영 중 카메라 전환: 하던 녹화는 버리고 새 카메라로 처음부터 본다
 let flipping = false;
@@ -483,7 +593,7 @@ function frame(gen){
       let p = null;
       if (L) { p = new Float32Array(99); for (let i = 0; i < 33; i++) { p[i*3] = L[i].x * W; p[i*3+1] = L[i].y * H; p[i*3+2] = L[i].visibility ?? 1; } }
       drawSkel(p, W, H);
-      step(ts / 1000, p);
+      step(ts / 1000, p, H);
     }
   } catch {}
   schedule(gen);
@@ -493,7 +603,7 @@ function frame(gen){
 let state = "idle", buf = [], hand = [], S = 0, stillFor = 0, lostFor = 0, prevT = 0, readyAt = 0, moveAt = 0, coolUntil = 0, noFeet = false, seen = false;
 function resetLive(){ state = "idle"; buf = []; hand = []; S = 0; stillFor = 0; lostFor = 0; prevT = 0; coolUntil = 0; seen = false; $("#result").hidden = true; setStatus(); }
 const STILL = 0.4, MOVE = 1.2;
-function step(t, p){
+function step(t, p, H){
   const dt = prevT ? Math.min(0.2, t - prevT) : 0; prevT = t;
   buf.push({t, p});
   while (buf.length && buf[0].t < t - 40) buf.shift();
@@ -513,6 +623,17 @@ function step(t, p){
     stillFor = speed < STILL ? stillFor + dt : 0;
     low = h[1] > mid(p, 11, 12)[1] + 0.6 * S;
   } else { lostFor += dt; stillFor = 0; hand = []; }
+
+  // 거리 판단과 자동 맞춤 (대기 중에만, 녹화·스윙 중에는 줌을 건드리지 않는다)
+  lastFrame = person ? framing(p, H) : {cut: false, frac: null};
+  if (person && lastFrame.frac != null && !lastFrame.cut) fracE = fracE == null ? lastFrame.frac : fracE * 0.9 + lastFrame.frac * 0.1;
+  cutFor = person && lastFrame.cut ? cutFor + dt : 0;
+  smallFor = person && fracE != null && fracE < 0.5 ? smallFor + dt : 0;
+  if (zcap && prefs.autoFit && state === "idle" && person && t - lastFit > 1.5) {
+    if (cutFor > 0.8) { setZoom(zoom / 1.2); lastFit = t; cutFor = 0; }
+    else if (smallFor > 1.2) { setZoom(zoom * Math.min(1.5, FIT / fracE)); lastFit = t; smallFor = 0; }
+    else if (fracE != null && fracE > 0.93) { setZoom(zoom / 1.15); lastFit = t; }
+  }
 
   if (state === "idle") {
     if (person && low && stillFor >= 0.6 && t >= coolUntil && !noFeet) { state = "ready"; readyAt = t; startRec(); compactResult(); }
@@ -547,7 +668,8 @@ function setStatus(){
     state === "moving" ? ["moving", "스윙 보는 중"] :
     state === "ready" ? ["ready", "녹화 중 · 스윙하세요"] :
     !seen || lostFor > 1 ? ["none", "사람을 찾는 중 · 머리부터 발끝까지 보이게 세워 주세요"] :
-    noFeet ? ["none", "발끝까지 화면에 나오게 해 주세요"] :
+    noFeet || lastFrame.cut ? ["none", zcap && prefs.autoFit ? "몸이 화면 밖으로 나가요 · 줌을 줄이는 중이에요" : zcap ? "몸이 잘려요 · 줌을 줄이거나 한 걸음 뒤로 가 주세요" : "몸이 잘려요 · 한 걸음 뒤로 가 주세요"] :
+    fracE != null && fracE < 0.42 && !(zcap && prefs.autoFit) ? ["idle", zcap ? "조금 멀어요 · 줌을 키우거나 가까이 오면 더 정확해요" : "조금 멀어요 · 한두 걸음 가까이 오면 더 정확해요"] :
     ["idle", "어드레스 자세로 1초 멈추면 녹화를 시작해요"];
   const key = s + text;
   if (key === lastStatus) return;
