@@ -61,6 +61,7 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
 /* 카메라 화면 */
 #live{position:fixed;inset:0;background:#000;z-index:10;overflow:hidden}
 #live video,#live canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+#live.mirror video,#live.mirror canvas{transform:scaleX(-1)}
 .hud-top{position:absolute;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) var(--gr) 10px var(--gl);display:flex;gap:8px;align-items:flex-start;justify-content:space-between;pointer-events:none}
 .status{background:var(--glass);border-radius:12px;padding:9px 13px;font-size:.92rem;font-weight:600;display:flex;gap:8px;align-items:center;max-width:78%;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .status i{width:10px;height:10px;border-radius:50%;background:var(--muted);flex:none}
@@ -83,7 +84,7 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
 .st{font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:99px;white-space:nowrap;background:var(--sunk);color:var(--muted)}
 .st[data-s="good"]{background:var(--good-bg);color:var(--good)} .st[data-s="fair"]{background:var(--fair-bg);color:var(--fair)}
 .st[data-s="check"]{background:var(--check-bg);color:var(--check)} .st[data-s="info"]{background:var(--info-bg);color:var(--info)}
-.ctrl{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ctrl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .ctrl button{background:var(--glass);border-color:transparent;min-height:50px;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 
 /* 목록 */
@@ -117,12 +118,15 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
     <button class="primary big" id="bStart">카메라 켜고 연습 시작</button>
     <div class="err" id="startErr" hidden></div>
     <div class="opts">
+      <span>카메라</span>
+      <div class="seg" data-pref="facing"><button type="button" data-v="environment">후면</button><button type="button" data-v="user">전면 (셀카)</button></div>
       <span>클럽</span>
       <div class="seg" data-pref="club"><button type="button" data-v="driver">드라이버</button><button type="button" data-v="wood">우드</button><button type="button" data-v="iron">아이언</button><button type="button" data-v="wedge">웨지</button></div>
       <span>촬영 방향</span>
       <div class="seg" data-pref="view"><button type="button" data-v="auto">자동</button><button type="button" data-v="face">정면</button><button type="button" data-v="dtl">후방</button></div>
     </div>
     <label class="sw"><input type="checkbox" id="optSpeak">스윙 끝나면 결과 읽어 주기</label>
+    <p class="fine">전면 카메라로 찍으면 스윙하면서 화면 속 내 자세와 결과를 볼 수 있어요. 화면은 거울처럼 좌우가 바뀌어 보이고, 녹화되는 영상과 분석은 그대로예요. 후면 카메라가 화질이 더 좋아요.</p>
   </section>
 
   <section class="card">
@@ -157,7 +161,7 @@ h1{margin:0;font-size:1.7rem;letter-spacing:-.02em} h2{margin:0;font-size:1.05re
   </div>
   <div class="hud-bot">
     <div class="result" id="result" hidden aria-live="polite"></div>
-    <div class="ctrl"><button type="button" id="bStop">끝내기</button><button type="button" id="bList">스윙 목록</button></div>
+    <div class="ctrl"><button type="button" id="bStop">끝내기</button><button type="button" id="bFlip">카메라 전환</button><button type="button" id="bList">스윙 목록</button></div>
   </div>
 </section>
 
@@ -179,12 +183,13 @@ const SHORT = {tempo: "템포", head: "머리 흔들림", sway: "스웨이", shi
 
 /* ---------- 설정 ---------- */
 const PREF_KEY = "swinglab-live.prefs.v1";
-const prefs = Object.assign({club: "driver", view: "auto", speak: true},
+const prefs = Object.assign({club: "driver", view: "auto", speak: true, facing: "environment"},
   (() => { try { return JSON.parse(localStorage.getItem(PREF_KEY) || "{}"); } catch { return {}; } })());
 const savePrefs = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch {} };
+const paints = {};
 $$(".seg[data-pref]").forEach(seg => {
   const key = seg.dataset.pref;
-  const paint = () => seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === prefs[key])));
+  const paint = paints[key] = () => seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === prefs[key])));
   paint();
   seg.querySelectorAll("button").forEach(b => b.onclick = () => { prefs[key] = b.dataset.v; savePrefs(); paint(); });
 });
@@ -386,10 +391,7 @@ $("#bStart").onclick = async () => {
   unlockSpeech();
   btn.disabled = true; btn.textContent = "카메라 켜는 중"; err.hidden = true;
   try {
-    if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name: "NoCamera"});
-    stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: "environment"}, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
-    cam.srcObject = stream;
-    await cam.play().catch(() => {});
+    await openCamera(prefs.facing);
     btn.textContent = "분석 엔진 준비 중";
     lm = await loadEngine();
     resetLive();
@@ -408,6 +410,36 @@ $("#bStart").onclick = async () => {
     btn.disabled = false; btn.textContent = "카메라 켜고 연습 시작";
   }
 };
+async function openCamera(facing){
+  if (!navigator.mediaDevices?.getUserMedia) throw Object.assign(new Error(), {name: "NoCamera"});
+  stream = await navigator.mediaDevices.getUserMedia({audio: false, video: {facingMode: {ideal: facing}, width: {ideal: 1280}, height: {ideal: 720}, frameRate: {ideal: 60, max: 60}}});
+  // 기기가 알려 주는 실제 방향을 따르고, 모르면 고른 값을 쓴다
+  const real = stream.getVideoTracks()[0]?.getSettings?.().facingMode;
+  $("#live").classList.toggle("mirror", (real || facing) === "user");
+  cam.srcObject = stream;
+  await cam.play().catch(() => {});
+}
+// 촬영 중 카메라 전환: 하던 녹화는 버리고 새 카메라로 처음부터 본다
+let flipping = false;
+$("#bFlip").onclick = async () => {
+  if (flipping || !running) return;
+  flipping = true; $("#bFlip").disabled = true;
+  const next = prefs.facing === "user" ? "environment" : "user";
+  running = false;
+  await stopRec(false);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  try {
+    await openCamera(next);
+    prefs.facing = next; savePrefs(); paints.facing?.();
+    toast(next === "user" ? "전면 카메라로 바꿨어요" : "후면 카메라로 바꿨어요");
+  } catch {
+    toast("카메라를 바꾸지 못했어요. 원래 카메라로 돌아갈게요.");
+    try { await openCamera(prefs.facing); } catch { stopCamera(); $("#live").hidden = true; flipping = false; $("#bFlip").disabled = false; return; }
+  }
+  resetLive();
+  running = true; schedule();
+  flipping = false; $("#bFlip").disabled = false;
+};
 function stopCamera(){
   running = false;
   stopRec(false);
@@ -423,7 +455,13 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* ---------- 실시간 처리 ---------- */
-function schedule(){ if (!running) return; if ("requestVideoFrameCallback" in cam) cam.requestVideoFrameCallback(frame); else requestAnimationFrame(frame); }
+// 카메라를 바꿔도 처리 루프가 하나만 돌도록 세대 번호로 묶는다
+let loopGen = 0;
+function schedule(gen = ++loopGen){
+  if (!running || gen !== loopGen) return;
+  const next = () => frame(gen);
+  if ("requestVideoFrameCallback" in cam) cam.requestVideoFrameCallback(next); else requestAnimationFrame(next);
+}
 function drawSkel(p, W, H){
   g.clearRect(0, 0, W, H);
   if (!p) return;
@@ -433,8 +471,8 @@ function drawSkel(p, W, H){
   g.fillStyle = "#ffffff";
   for (const i of JOINTS) { if (p[i*3+2] < .35) continue; g.beginPath(); g.arc(p[i*3], p[i*3+1], lw * 1.1, 0, Math.PI * 2); g.fill(); }
 }
-function frame(){
-  if (!running) return;
+function frame(gen){
+  if (!running || gen !== loopGen) return;
   try {
     const W = cam.videoWidth, H = cam.videoHeight;
     if (cam.readyState >= 2 && W) {
@@ -448,7 +486,7 @@ function frame(){
       step(ts / 1000, p);
     }
   } catch {}
-  schedule();
+  schedule(gen);
 }
 
 // 상태: idle(대기) → ready(어드레스, 녹화 중) → moving(스윙 중) → busy(분석) → idle
